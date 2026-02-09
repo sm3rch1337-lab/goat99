@@ -3,7 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="color-scheme" content="dark light" />
+  
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0b0d12" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="goat99" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
+<meta name="color-scheme" content="dark light" />
   <title>Трекер похудения — прототип (v4)</title>
   <style>
     :root{
@@ -774,7 +784,6 @@
     }
     .seg .btn{ min-height: 44px; border-radius: 16px; }
   </style>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <main class="app" aria-label="Трекер похудения">
@@ -969,6 +978,28 @@
           </select>
         </div>
 
+<hr style="border:none;border-top:1px solid rgba(255,255,255,.08); margin:14px 0;">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+  <b>Резервная копия</b>
+  <span style="color:var(--muted2); font-size:12px;">на этом iPhone</span>
+</div>
+<div style="color:var(--muted2); font-size:12px; line-height:1.35; margin-bottom:10px;">
+  Экспорт сохраняет файл <b>backup.json</b>. Импорт восстановит данные (вес, калории, шаги, меню, смены, зп).
+</div>
+<div style="display:flex; gap:10px; flex-wrap:wrap;">
+  <button class="btn" id="btnBackupExport" type="button">⬇ Экспорт</button>
+  <button class="btn ghost" id="btnBackupImport" type="button">⬆ Импорт</button>
+  <input id="backupFile" type="file" accept="application/json" style="display:none" />
+</div>
+<div style="margin-top:10px;">
+  <label style="display:block;color:var(--muted2); font-size:12px; margin-bottom:6px;">Импорт из текста (если удобно)</label>
+  <textarea id="backupText" rows="4" style="width:100%; padding:10px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); color:var(--text); resize:vertical;" placeholder='Вставь сюда JSON из backup.json и нажми «Восстановить»'></textarea>
+  <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+    <button class="btn ghost" id="btnBackupRestoreText" type="button">Восстановить из текста</button>
+    <button class="btn ghost" id="btnBackupCopyText" type="button">Скопировать текущее состояние</button>
+  </div>
+</div>
+
         <div style="color:var(--muted2); font-size:12px; line-height:1.35;">
           ⚠️ Важно: «вопрос в 06:40/18:40» сработает только когда приложение открыто.
           Для настоящих уведомлений в Telegram WebApp нужен сервер + уведомления/бот.
@@ -1071,6 +1102,7 @@
   </div>
 
   <script>
+
     const $ = (sel, root=document) => root.querySelector(sel);
     const $$ = (sel, root=document) => [...root.querySelectorAll(sel)];
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
@@ -1128,7 +1160,40 @@
     };
 
     const STORAGE_KEY = "tg_weight_app_proto_v2";
-    const defaultState = {
+    
+
+// ---- IndexedDB (надёжное хранилище для iOS/PWA) ----
+const IDB_NAME = "goat99_db";
+const IDB_STORE = "kv";
+const IDB_KEY = "state_v1";
+
+function idbOpen(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbGet(key){
+  const db = await idbOpen();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const store = tx.objectStore(IDB_STORE);
+    const r = store.get(key);
+    r.onsuccess = ()=> resolve(r.result);
+    r.onerror = ()=> reject(r.error);
+  });
+}
+async function idbSet(key, value){
+  const db = await idbOpen();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.oncomplete = ()=> resolve(true);
+    tx.onerror = ()=> reject(tx.error);
+    tx.objectStore(IDB_STORE).put(value, key);
+  });
+}const defaultState = {
       meta: { seedVersion: 0, workAskLog: {} },
       settings: {
         weight: 198,
@@ -1143,7 +1208,35 @@
     };
 
     let state = loadState();
-    migrateIfNeeded();
+    
+
+async function idbHydrate(){
+  if(!("indexedDB" in window)) return;
+  try{
+    const fromIdb = await idbGet(IDB_KEY);
+    if(!fromIdb) return;
+    const a = (fromIdb.__meta && fromIdb.__meta.savedAt) || 0;
+    const b = (state.__meta && state.__meta.savedAt) || 0;
+    if(a > b){
+      state = { ...structuredClone(defaultState), ...fromIdb };
+      // ensure deep defaults
+      state.days = state.days || {};
+      state.settings = state.settings || structuredClone(defaultState.settings);
+      saveState(); // sync to localStorage too
+      render();
+    idbHydrate();
+
+
+// ---- PWA: service worker ----
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  });
+}
+    }
+  }catch(e){}
+}
+migrateIfNeeded();
     seedIfNeeded();
 
     let selectedDate = iso(new Date());
@@ -1754,10 +1847,86 @@
       hideOverlay("#workAskOverlay");
     });
 
+
+// ---- Backup: export/import JSON ----
+function downloadJson(filename, obj){
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+function normalizeImported(raw){
+  // Merge with defaults to avoid missing fields after updates
+  const merged = { ...structuredClone(defaultState), ...raw };
+  merged.days = merged.days || {};
+  merged.settings = merged.settings || structuredClone(defaultState.settings);
+  merged.__meta = merged.__meta || {};
+  merged.__meta.savedAt = Date.now();
+  return merged;
+}
+
+async function importState(raw){
+  state = normalizeImported(raw);
+  saveState();
+  await idbSet(IDB_KEY, state).catch(()=>{});
+  render();
+}
+
+$("#btnBackupExport")?.addEventListener("click", ()=>{
+  downloadJson("backup.json", state);
+  // also put to textarea for quick copy
+  const t = $("#backupText"); if(t) t.value = JSON.stringify(state);
+});
+
+$("#btnBackupImport")?.addEventListener("click", ()=>{
+  $("#backupFile")?.click();
+});
+
+$("#backupFile")?.addEventListener("change", async (ev)=>{
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  try{
+    const text = await f.text();
+    const raw = JSON.parse(text);
+    await importState(raw);
+  }catch(e){
+    toast("Ошибка импорта. Проверь файл backup.json");
+  }finally{
+    ev.target.value = "";
+  }
+});
+
+$("#btnBackupRestoreText")?.addEventListener("click", async ()=>{
+  const t = $("#backupText");
+  if(!t || !t.value.trim()) return toast("Вставь JSON в поле");
+  try{
+    const raw = JSON.parse(t.value.trim());
+    await importState(raw);
+    toast("Восстановлено");
+  }catch(e){
+    toast("Ошибка: JSON некорректный");
+  }
+});
+
+$("#btnBackupCopyText")?.addEventListener("click", async ()=>{
+  const txt = JSON.stringify(state);
+  try{
+    await navigator.clipboard.writeText(txt);
+    toast("Скопировано");
+  }catch(e){
+    const t = $("#backupText"); if(t) t.value = txt;
+    toast("Не удалось скопировать — текст вставлен в поле");
+  }
+});
+
     tickAsk();
     setInterval(tickAsk, 20000);
 
     render();
+  
   </script>
 </body>
 </html>
