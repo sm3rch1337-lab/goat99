@@ -721,6 +721,9 @@
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
       overflow:hidden;
+      display:flex;
+      flex-direction:column;
+      max-height: calc(100dvh - 28px - env(safe-area-inset-bottom));
     }
     .sheet-head{
       display:flex;
@@ -731,7 +734,11 @@
       border-bottom: 1px solid rgba(255,255,255,.10);
     }
     .sheet-head b{ font-size: 14px; font-weight: 860; letter-spacing: .2px; }
-    .sheet-body{ padding: 14px 14px 16px; }
+    .sheet-body{ padding: 14px 14px 16px;
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+      flex: 1;
+      min-height: 0; }
     .field{
       display:flex;
       flex-direction:column;
@@ -1611,8 +1618,37 @@ migrateIfNeeded();
       toast(v ? `+${money(state.settings.payPerShift)} ₽ (отмечено)` : "Отмечено: не вышел");
     }
 
-    function showOverlay(id){ $(id).classList.add("show"); }
-    function hideOverlay(id){ $(id).classList.remove("show"); }
+    let __scrollY = 0;
+function __lockScroll(){
+  // iOS-safe scroll lock
+  __scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${__scrollY}px`;
+  document.body.style.left = "0";
+  document.body.style.right = "0";
+  document.body.style.width = "100%";
+  document.body.style.overflow = "hidden";
+}
+function __unlockScroll(){
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.left = "";
+  document.body.style.right = "";
+  document.body.style.width = "";
+  document.body.style.overflow = "";
+  window.scrollTo(0, __scrollY);
+}
+
+function showOverlay(id){
+  __lockScroll();
+  $(id).classList.add("show");
+}
+function hideOverlay(id){
+  $(id).classList.remove("show");
+  // Unlock only if no overlays are visible
+  const anyOpen = Array.from(document.querySelectorAll(".overlay")).some(o=>o.classList.contains("show"));
+  if(!anyOpen) __unlockScroll();
+}
 
     function openSettings(focusId=null){
       const s = state.settings;
